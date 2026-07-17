@@ -1,7 +1,9 @@
-import os
-
 import chainlit as cl
 import dotenv
+import os
+
+dotenv.load_dotenv()
+
 from openai.types.responses import ResponseTextDeltaEvent
 from pydantic import BaseModel
 
@@ -9,6 +11,7 @@ from agents import (
     SQLiteSession,
     Agent,
     GuardrailFunctionOutput,
+    InputGuardrailTripwireTriggered,
     RunContextWrapper,
     Runner,
     TResponseInputItem,
@@ -19,12 +22,9 @@ from agents import (
 from nutrition_agent import nutrition_agent
 
 
-dotenv.load_dotenv()
-
-
 class NotAboutFood(BaseModel):
     only_about_food: bool
-    """Whether the user is only talking about food and not about arbitrary topics."""
+    """Whether the user is only talking about food and not about arbitrary topics"""
 
 
 guardrail_agent = Agent(
@@ -120,9 +120,6 @@ breakfast_price_checker_agent = Agent(
 
 
 # Agent 4: multi-agent advisor / orchestrator agent
-#
-# input_guardrails removed from here; put in on_message, before streaming. 
-# I did have partial off-topic answers before...
 breakfast_advisor_agent = Agent(
     name="Breakfast Advisor",
     instructions="""
@@ -143,6 +140,9 @@ breakfast_advisor_agent = Agent(
     handoffs=[
         breakfast_price_checker_agent,
     ],
+    input_guardrails=[
+        food_topic_guardrail,
+    ],
 )
 
 
@@ -156,54 +156,46 @@ async def on_chat_start():
 async def on_message(message: cl.Message):
     session = cl.user_session.get("agent_session")
 
-    # 1) Run guardrail BEFORE streaming anything.
-    guardrail_result = await Runner.run(
-        guardrail_agent,
-        message.content,
-    )
+    try:
+        result = Runner.run_streamed(
+            nutrition_agent,
+            message.content,
+            session=session
+        )
 
-    if not guardrail_result.final_output.only_about_food:
+        msg = cl.Message(content="")
+
+        async for event in result.stream_events():
+            # Stream final message text to screen
+            if event.type == "raw_response_event" and isinstance(
+                event.data, ResponseTextDeltaEvent
+            ):
+                await msg.stream_token(token=event.data.delta)
+                print(event.data.delta, end="", flush=True)
+
+            elif (
+                event.type == "raw_response_event"
+                and hasattr(event.data, "item")
+                and hasattr(event.data.item, "type")
+                and event.data.item.type == "function_call"
+                and len(event.data.item.arguments) > 0
+            ):
+                with cl.Step(name=f"{event.data.item.name}", type="tool") as step:
+                    step.input = event.data.item.arguments
+                    print(
+                        f"\nTool call: {event.data.item.name} "
+                        f"with args: {event.data.item.arguments}"
+                    )
+
+        await msg.update()
+
+    except InputGuardrailTripwireTriggered:
         await cl.Message(
             content=(
                 "I can only answer food and nutrition-related questions here. "
-                "Please ask me about meals, ingredients, calories, breakfast planning, "
-                "prices, or nutrition."
+                "Please ask me about meals, ingredients, calories, or nutrition."
             )
         ).send()
-        return
-
-    # 2) Only stream the multi-agent answer if the guardrail passed.
-    result = Runner.run_streamed(
-        breakfast_advisor_agent,
-        message.content,
-        session=session,
-    )
-
-    msg = cl.Message(content="")
-
-    async for event in result.stream_events():
-        # Stream final message text to screen
-        if event.type == "raw_response_event" and isinstance(
-            event.data, ResponseTextDeltaEvent
-        ):
-            await msg.stream_token(token=event.data.delta)
-            print(event.data.delta, end="", flush=True)
-
-        elif (
-            event.type == "raw_response_event"
-            and hasattr(event.data, "item")
-            and hasattr(event.data.item, "type")
-            and event.data.item.type == "function_call"
-            and len(event.data.item.arguments) > 0
-        ):
-            with cl.Step(name=f"{event.data.item.name}", type="tool") as step:
-                step.input = event.data.item.arguments
-                print(
-                    f"\nTool call: {event.data.item.name} "
-                    f"with args: {event.data.item.arguments}"
-                )
-
-    await msg.update()
 
 
 @cl.password_auth_callback
@@ -216,5 +208,6 @@ def auth_callback(username: str, password: str):
             identifier="Student",
             metadata={"role": "student", "provider": "credentials"},
         )
-
-    return None
+    else:
+        return None
+    
