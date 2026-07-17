@@ -60,4 +60,3 @@ def auth_callback(username: str, password: str):
         )
     else:
         return None
-    
