@@ -1,7 +1,14 @@
 import os
+import dotenv
+
+dotenv.load_dotenv("../.env", override=True)
+
+print("AUTH SECRET loaded:", bool(os.getenv("CHAINLIT_AUTH_SECRET")))
+print("USERNAME loaded:", bool(os.getenv("CHAINLIT_USERNAME")))
+print("PASSWORD loaded:", bool(os.getenv("CHAINLIT_PASSWORD")))
 
 import chainlit as cl
-import dotenv
+
 from openai.types.responses import ResponseTextDeltaEvent
 from pydantic import BaseModel
 
@@ -17,10 +24,6 @@ from agents import (
 )
 
 from nutrition_agent import nutrition_agent
-
-
-dotenv.load_dotenv()
-
 
 class NotAboutFood(BaseModel):
     only_about_food: bool
@@ -216,5 +219,5 @@ def auth_callback(username: str, password: str):
             identifier="Student",
             metadata={"role": "student", "provider": "credentials"},
         )
-
-    return None
+    else:
+        return None

@@ -1,8 +1,14 @@
-import chainlit as cl
-import dotenv
-import os
 
-dotenv.load_dotenv()
+import os
+import dotenv
+
+dotenv.load_dotenv("../.env", override=True)
+
+print("AUTH SECRET loaded:", bool(os.getenv("CHAINLIT_AUTH_SECRET")))
+print("USERNAME loaded:", bool(os.getenv("CHAINLIT_USERNAME")))
+print("PASSWORD loaded:", bool(os.getenv("CHAINLIT_PASSWORD")))
+
+import chainlit as cl
 
 from openai.types.responses import ResponseTextDeltaEvent
 
